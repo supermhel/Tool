@@ -42,21 +42,14 @@ Architecture diagram
 ```mermaid
 ```mermaid
 flowchart TB
-  subgraph UI[UI]
-    F[Frontend: React / Vite / Tailwind]
-  end
-  subgraph API[API]
-    B[FastAPI backend]
-    PDF[WeasyPrint]
-  end
-  subgraph MODEL[Model]
-    O[Ollama (local)]
-  end
-  F -->|REST /api/v1| B
-  B -->|store| Storage[(JSON / Postgres)]
-  B -->|export| PDF
-  B -->|inference| O
-  %% Local inference is optional (note blocks / click handlers are not well supported by GitHub's Mermaid renderer)
+  UI[Frontend: React / Vite / Tailwind]
+  API[FastAPI backend]
+  PDF[WeasyPrint]
+  MODEL[Ollama (local)]
+  UI -->|REST /api/v1| API
+  API -->|store| Storage[(JSON / Postgres)]
+  API -->|export| PDF
+  API -->|inference| MODEL
 ```
 
 

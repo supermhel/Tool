@@ -1,8 +1,8 @@
-"""Génération du PDF d'un ticket via WeasyPrint (rendu serveur propre).
+"""Génération du HTML imprimable d'un ticket.
 
-WeasyPrint dépend de bibliothèques système (Pango/Cairo). Si elles manquent,
-`render_ticket_pdf` lève RuntimeError et le router renvoie alors un HTML
-imprimable en repli, ce qui garde la fonctionnalité disponible partout.
+Le PDF est produit côté navigateur via window.print() — aucune dépendance
+système (Pango/Cairo/WeasyPrint) requise. Le endpoint /export?format=pdf
+sert ce HTML avec le script d'impression auto-déclenché.
 """
 
 from datetime import datetime
@@ -16,8 +16,12 @@ def _grade_color(grade: str) -> str:
     }.get(grade, "#5b8cff")
 
 
-def render_ticket_html(ticket: dict) -> str:
-    """HTML autonome et imprimable d'un ticket (sert au PDF et au repli navigateur)."""
+def render_ticket_html(ticket: dict, auto_print: bool = False) -> str:
+    """HTML autonome et imprimable d'un ticket.
+
+    Quand `auto_print=True`, déclenche window.print() au chargement (utilisé
+    pour le format d'export PDF côté navigateur).
+    """
     created = ticket.get("created_at", "")
     try:
         created = datetime.fromisoformat(created).strftime("%d/%m/%Y %H:%M")
@@ -35,6 +39,7 @@ def render_ticket_html(ticket: dict) -> str:
         </tr>"""
 
     gc = _grade_color(ticket.get("grade", ""))
+    print_script = "<script>window.onload = () => window.print();</script>" if auto_print else ""
     return f"""<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8">
 <title>Ticket {escape(ticket.get('id',''))}</title>
@@ -82,14 +87,5 @@ def render_ticket_html(ticket: dict) -> str:
   {f'<div class="notes"><b>Commentaire :</b> {escape(ticket["notes"])}</div>' if ticket.get('notes') else ''}
 
   <footer>Tool — plateforme d'évaluation générique. Score = moyenne pondérée des atteintes par critère, normalisée sur 100.</footer>
+  {print_script}
 </body></html>"""
-
-
-def render_ticket_pdf(ticket: dict) -> bytes:
-    """Rend le PDF avec WeasyPrint. Lève RuntimeError si indisponible."""
-    try:
-        from weasyprint import HTML  # import paresseux : deps système requises
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"WeasyPrint indisponible : {exc}") from exc
-    html = render_ticket_html(ticket)
-    return HTML(string=html).write_pdf()

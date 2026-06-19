@@ -43,8 +43,8 @@ TEMPLATES = {
                 "Niveau d'automatisation et reproductibilité",
             ],
             "excluded": [
-                ("Le ressenti des utilisateurs du processus", "sentiment"),
-                ("La qualité technique des outils support", "system"),
+                {"label": "Le ressenti des utilisateurs du processus", "ref": "sentiment"},
+                {"label": "La qualité technique des outils support", "ref": "system"},
             ],
         },
     },
@@ -77,8 +77,8 @@ TEMPLATES = {
                 "Sécurité et maintenabilité",
             ],
             "excluded": [
-                ("L'organisation et le processus métier", "process"),
-                ("La satisfaction des utilisateurs finaux", "sentiment"),
+                {"label": "L'organisation et le processus métier", "ref": "process"},
+                {"label": "La satisfaction des utilisateurs finaux", "ref": "sentiment"},
             ],
         },
     },
@@ -111,8 +111,8 @@ TEMPLATES = {
                 "Fidélité et réactivité ressentie",
             ],
             "excluded": [
-                ("Les causes liées au processus interne", "process"),
-                ("Les causes techniques sous-jacentes", "system"),
+                {"label": "Les causes liées au processus interne", "ref": "process"},
+                {"label": "Les causes techniques sous-jacentes", "ref": "system"},
             ],
         },
     },

@@ -200,7 +200,7 @@ function UploadTemplate({ onUpload }) {
       >
         Load personal template
       </button>
-      <input ref={fileRef} type="file" accept="application/json,.json,.yaml,.yml,text/csv,.csv" onChange={handleFile} className="hidden" />
+      <input ref={fileRef} type="file" accept="application/json,.json,.yaml,.yml,text/csv,.csv,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf" onChange={handleFile} className="hidden" />
       {err && <div className="text-sm text-bad">{err}</div>}
     </div>
   );
@@ -220,7 +220,7 @@ function ScopeBlocks({ scope }) {
       <div className="rounded-lg bg-ink border border-line p-3">
         <div className="text-xs font-bold uppercase text-faint mb-1">Not covered</div>
         <ul className="text-sm text-muted list-disc pl-4 space-y-0.5">
-          {scope.excluded.map(([label, ref], i) => (
+          {scope.excluded.map(({ label, ref }, i) => (
             <li key={i}>{label} <span className="text-faint">→ {ref}</span></li>
           ))}
         </ul>

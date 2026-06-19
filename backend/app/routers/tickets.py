@@ -1,10 +1,10 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..models import Ticket
-from ..pdf import render_ticket_html, render_ticket_pdf
+from ..pdf import render_ticket_html
 from ..storage import store
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -50,17 +50,5 @@ def export_ticket(
     if format == "html":
         return HTMLResponse(render_ticket_html(t))
 
-    # format == "pdf"
-    try:
-        pdf = render_ticket_pdf(t)
-    except RuntimeError:
-        # Repli : HTML imprimable (le navigateur propose "Enregistrer en PDF")
-        return HTMLResponse(
-            render_ticket_html(t),
-            headers={"X-PDF-Fallback": "weasyprint-unavailable"},
-        )
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="ticket-{ticket_id}.pdf"'},
-    )
+    # format == "pdf": serve printable HTML — browser print dialog saves as PDF
+    return HTMLResponse(render_ticket_html(t, auto_print=True))

@@ -1,15 +1,15 @@
-"""Stockage des tickets.
+"""Ticket storage.
 
-Deux implémentations partageant la même interface :
+Two implementations sharing the same interface:
 
-- JsonStore   — fichier JSON local (dev / Docker). Actif par défaut.
-- UpstashStore — Upstash Redis REST API (Vercel KV et tout déploiement cloud).
-  Activé automatiquement quand KV_REST_API_URL et KV_REST_API_TOKEN sont définis
-  (Vercel les injecte dès que l'intégration KV est activée sur le projet).
+- JsonStore    — local JSON file (dev / Docker). Active by default.
+- UpstashStore — Upstash Redis REST API (Vercel KV and any cloud deployment).
+  Auto-selected when KV_REST_API_URL and KV_REST_API_TOKEN are set
+  (Vercel injects these automatically when the KV integration is enabled).
 
-Structure Redis :
-  tickets_index  — liste d'IDs (LPUSH → ordre antéchronologique)
-  ticket:{id}    — JSON sérialisé du ticket
+Redis layout:
+  tickets_index  — list of IDs (LPUSH → newest-first order)
+  ticket:{id}    — JSON-serialised ticket
 """
 
 import json

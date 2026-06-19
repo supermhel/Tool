@@ -5,14 +5,14 @@ from app.scoring import evaluate, score_to_grade
 def test_grade_thresholds():
     assert score_to_grade(100) == ("A", "Excellent")
     assert score_to_grade(85)  == ("A", "Excellent")
-    assert score_to_grade(84.9) == ("B", "Bon")
-    assert score_to_grade(70)  == ("B", "Bon")
-    assert score_to_grade(69.9) == ("C", "À surveiller")
-    assert score_to_grade(55)  == ("C", "À surveiller")
-    assert score_to_grade(54.9) == ("D", "Insuffisant")
-    assert score_to_grade(40)  == ("D", "Insuffisant")
-    assert score_to_grade(39.9) == ("E", "Critique")
-    assert score_to_grade(0)   == ("E", "Critique")
+    assert score_to_grade(84.9) == ("B", "Good")
+    assert score_to_grade(70)  == ("B", "Good")
+    assert score_to_grade(69.9) == ("C", "Watch")
+    assert score_to_grade(55)  == ("C", "Watch")
+    assert score_to_grade(54.9) == ("D", "Poor")
+    assert score_to_grade(40)  == ("D", "Poor")
+    assert score_to_grade(39.9) == ("E", "Critical")
+    assert score_to_grade(0)   == ("E", "Critical")
 
 
 def test_evaluate_perfect_score():
@@ -20,7 +20,7 @@ def test_evaluate_perfect_score():
     result = evaluate("process", scores)
     assert result["score"] == 100.0
     assert result["grade"] == "A"
-    assert result["grade_label"] == "Excellent"
+    assert result["grade_label"] == "Excellent"  # unchanged
 
 
 def test_evaluate_zero_score():
@@ -61,5 +61,5 @@ def test_evaluate_all_templates():
 
 
 def test_evaluate_unknown_template():
-    with pytest.raises(ValueError, match="inconnu"):
+    with pytest.raises(ValueError, match="Unknown"):
         evaluate("nonexistent", {})

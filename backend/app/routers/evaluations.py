@@ -5,16 +5,16 @@ from ..scoring import evaluate
 from ..templates_data import get_template
 from ..storage import store
 
-router = APIRouter(prefix="/api/v1/evaluations", tags=["évaluations"])
+router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 
-@router.post("", response_model=Ticket, summary="Lance une évaluation et crée un ticket")
+@router.post("", response_model=Ticket, summary="Run an evaluation and create a ticket")
 def create_evaluation(req: EvaluationRequest):
-    """Calcule le score (moyenne pondérée des critères, normalisée sur 100) et
-    le grade, puis persiste le résultat sous forme de ticket."""
+    """Compute the score (weighted average of criteria, normalised to 100) and grade,
+    then persist the result as a ticket."""
     tpl = get_template(req.template_id)
     if tpl is None:
-        raise HTTPException(404, f"Template inconnu : {req.template_id}")
+        raise HTTPException(404, f"Unknown template: {req.template_id}")
     try:
         result = evaluate(req.template_id, req.scores)
     except ValueError as exc:

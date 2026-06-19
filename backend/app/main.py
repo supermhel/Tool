@@ -1,7 +1,7 @@
-"""Point d'entrée FastAPI.
+"""FastAPI entry point.
 
-Lance avec :  uvicorn app.main:app --reload
-Documentation Swagger auto sur /docs , ReDoc sur /redoc.
+Start with:  uvicorn app.main:app --reload
+Auto Swagger docs at /docs, ReDoc at /redoc.
 """
 
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -12,18 +12,19 @@ from .routers import templates, evaluations, tickets, chat
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Garde optionnelle : active uniquement si API_KEY est défini."""
+    """Optional guard: active only when API_KEY is set."""
     if settings.API_KEY and x_api_key != settings.API_KEY:
-        raise HTTPException(401, "Clé API invalide ou manquante (header X-API-Key).")
+        raise HTTPException(401, "Invalid or missing API key (header X-Api-Key).")
 
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.VERSION,
     description=(
-        "API d'une plateforme d'évaluation générique. Trois templates "
-        "(processus, système, sentiment client) : critères pondérés → score → grade. "
-        "Tickets exportables en PDF/JSON et chatbot branché sur un modèle open source local."
+        "Generic evaluation platform API. Three built-in templates "
+        "(process, system, customer sentiment): weighted criteria → score → grade. "
+        "Tickets exportable as PDF/JSON, REST API for integration, "
+        "chatbot backed by a local open-source model."
     ),
     dependencies=[Depends(require_api_key)],
 )
@@ -42,7 +43,7 @@ app.include_router(tickets.router)
 app.include_router(chat.router)
 
 
-@app.get("/api/v1/health", tags=["système"], summary="Vérification de disponibilité")
+@app.get("/api/v1/health", tags=["system"], summary="Health check")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.VERSION,
             "model": settings.OLLAMA_MODEL}

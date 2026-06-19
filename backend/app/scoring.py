@@ -1,14 +1,13 @@
-"""Logique de notation : critères pondérés -> score (0-100) -> grade."""
+"""Scoring logic: weighted criteria → score (0-100) → grade."""
 
 from .templates_data import get_template
 
-# Grille de grades. Seuils paramétrables par template si besoin.
 GRADES = [
     (85, "A", "Excellent"),
-    (70, "B", "Bon"),
-    (55, "C", "À surveiller"),
-    (40, "D", "Insuffisant"),
-    (0,  "E", "Critique"),
+    (70, "B", "Good"),
+    (55, "C", "Watch"),
+    (40, "D", "Poor"),
+    (0,  "E", "Critical"),
 ]
 
 
@@ -16,18 +15,18 @@ def score_to_grade(score: float):
     for threshold, letter, label in GRADES:
         if score >= threshold:
             return letter, label
-    return "E", "Critique"
+    return "E", "Critical"
 
 
 def evaluate(template_id: str, scores: dict):
-    """Calcule le score normalisé sur 100 et le détail par critère.
+    """Compute the normalised score (0-100) and per-criterion breakdown.
 
-    `scores` est un dict {criterion_id: note}.
-    Lève ValueError si le template est inconnu.
+    `scores` is a dict {criterion_id: value}.
+    Raises ValueError if the template is unknown.
     """
     template = get_template(template_id)
     if template is None:
-        raise ValueError(f"Template inconnu : {template_id}")
+        raise ValueError(f"Unknown template: {template_id}")
 
     total_weight = 0.0
     weighted = 0.0
@@ -36,7 +35,7 @@ def evaluate(template_id: str, scores: dict):
     for crit in template["criteria"]:
         cid = crit["id"]
         raw = float(scores.get(cid, 0))
-        raw = max(0.0, min(raw, crit["max"]))  # borne dans [0, max]
+        raw = max(0.0, min(raw, crit["max"]))
         ratio = raw / crit["max"] if crit["max"] else 0.0
         weighted += ratio * crit["weight"]
         total_weight += crit["weight"]

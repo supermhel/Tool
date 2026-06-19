@@ -1,4 +1,4 @@
-"""Schémas Pydantic — contrat d'entrée/sortie de l'API."""
+"""Pydantic schemas — API input/output contracts."""
 
 from datetime import datetime
 from typing import Optional
@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field
 
 class EvaluationRequest(BaseModel):
     template_id: str = Field(..., examples=["process"])
-    subject: str = Field(..., description="Objet évalué (nom du processus, système, client...)",
-                         examples=["Processus d'onboarding"])
-    scores: dict[str, float] = Field(..., description="Notes par critère {criterion_id: note}",
+    subject: str = Field(..., description="Entity being evaluated (process name, system, customer…)",
+                         examples=["Onboarding process"])
+    scores: dict[str, float] = Field(..., description="Scores per criterion {criterion_id: value}",
                                      examples=[{"steps": 8, "bottlenecks": 6}])
-    notes: Optional[str] = Field(None, description="Commentaire libre de l'évaluateur")
+    notes: Optional[str] = Field(None, description="Free-form evaluator comment")
 
 
 class CriterionDetail(BaseModel):
@@ -44,11 +44,11 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    ticket_id: Optional[str] = Field(None, description="Contextualise la réponse sur un ticket précis")
+    ticket_id: Optional[str] = Field(None, description="Restrict context to a specific ticket")
 
 
 class ChatResponse(BaseModel):
     reply: str
     model: str
     grounded_on: list[str] = Field(default_factory=list,
-                                   description="IDs des tickets utilisés comme contexte")
+                                   description="IDs of tickets used as context")

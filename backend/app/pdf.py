@@ -1,8 +1,7 @@
-"""Génération du HTML imprimable d'un ticket.
+"""Printable HTML generation for tickets.
 
-Le PDF est produit côté navigateur via window.print() — aucune dépendance
-système (Pango/Cairo/WeasyPrint) requise. Le endpoint /export?format=pdf
-sert ce HTML avec le script d'impression auto-déclenché.
+PDF is produced client-side via the browser's print dialog (window.print()).
+The /export?format=pdf endpoint serves this HTML with auto-print triggered on load.
 """
 
 from datetime import datetime
@@ -17,10 +16,10 @@ def _grade_color(grade: str) -> str:
 
 
 def render_ticket_html(ticket: dict, auto_print: bool = False) -> str:
-    """HTML autonome et imprimable d'un ticket.
+    """Return a self-contained printable HTML page for a ticket.
 
-    Quand `auto_print=True`, déclenche window.print() au chargement (utilisé
-    pour le format d'export PDF côté navigateur).
+    When `auto_print=True`, triggers window.print() on load (used for the
+    browser-side PDF export flow).
     """
     created = ticket.get("created_at", "")
     try:
@@ -41,7 +40,7 @@ def render_ticket_html(ticket: dict, auto_print: bool = False) -> str:
     gc = _grade_color(ticket.get("grade", ""))
     print_script = "<script>window.onload = () => window.print();</script>" if auto_print else ""
     return f"""<!DOCTYPE html>
-<html lang="fr"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <title>Ticket {escape(ticket.get('id',''))}</title>
 <style>
   @page {{ size: A4; margin: 18mm; }}
@@ -69,23 +68,23 @@ def render_ticket_html(ticket: dict, auto_print: bool = False) -> str:
   <div class="head">
     <div>
       <h1>{escape(ticket.get('template_name',''))} — {escape(ticket.get('subject',''))}</h1>
-      <div class="meta">Ticket {escape(ticket.get('id',''))} · généré le {escape(str(created))}</div>
+      <div class="meta">Ticket {escape(ticket.get('id',''))} · generated {escape(str(created))}</div>
     </div>
     <div class="badge"><div class="g">{escape(ticket.get('grade',''))}</div>
       <div class="s">{ticket.get('score','')} / 100 · {escape(ticket.get('grade_label',''))}</div></div>
   </div>
 
-  <div class="scope"><b>Périmètre évalué.</b> Ce rapport mesure les critères listés ci-dessous
-  pour le template « {escape(ticket.get('template_name',''))} ». Les dimensions hors de ce template
-  ne sont pas couvertes par ce score.</div>
+  <div class="scope"><b>Scope.</b> This report measures the criteria listed below
+  for the template "{escape(ticket.get('template_name',''))}". Dimensions outside this template
+  are not covered by this score.</div>
 
   <table>
-    <thead><tr><th>Critère évalué</th><th>Note</th><th>Poids</th><th>Atteinte</th></tr></thead>
+    <thead><tr><th>Criterion</th><th>Score</th><th>Weight</th><th>Attainment</th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
 
-  {f'<div class="notes"><b>Commentaire :</b> {escape(ticket["notes"])}</div>' if ticket.get('notes') else ''}
+  {f'<div class="notes"><b>Notes:</b> {escape(ticket["notes"])}</div>' if ticket.get('notes') else ''}
 
-  <footer>Tool — plateforme d'évaluation générique. Score = moyenne pondérée des atteintes par critère, normalisée sur 100.</footer>
+  <footer>Tool — generic evaluation platform. Score = weighted average of criterion attainment, normalised to 100.</footer>
   {print_script}
 </body></html>"""

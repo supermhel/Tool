@@ -1,8 +1,8 @@
-"""Client du modèle open source local (Ollama).
+"""Ollama client for the chatbot.
 
-Le chatbot reçoit le contexte des évaluations et répond en français. Si Ollama
-n'est pas joignable, on renvoie une réponse de repli ancrée sur les données
-locales plutôt que d'échouer — l'outil reste utilisable hors-ligne.
+Sends ticket context to a local Ollama model. When Ollama is unreachable the
+chat function falls back to a deterministic rule-based responder so the app
+stays usable without any model infrastructure.
 """
 
 import httpx
@@ -11,35 +11,31 @@ from .config import settings
 from typing import Optional, List
 
 SYSTEM_PROMPT = (
-    "Tu es l'assistant d'une plateforme d'évaluation. Tu réponds en français, "
-    "de façon concise et factuelle. Tu t'appuies UNIQUEMENT sur le contexte des "
-    "tickets d'évaluation fourni. Si l'information n'y figure pas, dis-le. "
-    "Cite les critères et le périmètre quand c'est pertinent. N'invente aucun chiffre."
+    "You are an assistant for an evaluation platform. Answer concisely and factually. "
+    "Base your answers ONLY on the evaluation ticket context provided. If information "
+    "is not in the context, say so. Cite criteria and scope when relevant. "
+    "Never invent numbers."
 )
 
 
 def build_context(tickets: list[dict]) -> str:
     if not tickets:
-        return "Aucune évaluation enregistrée pour le moment."
+        return "No evaluations recorded yet."
     lines = []
     for t in tickets[:20]:
         crit = ", ".join(
             f"{d['label']}={d['value']}/{d['max']}" for d in t.get("details", [])
         )
         lines.append(
-            f"- Ticket {t['id']} | {t['template_name']} | sujet: {t['subject']} | "
+            f"- Ticket {t['id']} | {t['template_name']} | subject: {t['subject']} | "
             f"score {t['score']}/100 (grade {t['grade']} – {t['grade_label']}) | "
-            f"critères: {crit}"
+            f"criteria: {crit}"
         )
-    return "Tickets d'évaluation disponibles :\n" + "\n".join(lines)
+    return "Available evaluation tickets:\n" + "\n".join(lines)
 
 
 def _simple_fallback_answer(messages: list[dict], tickets: Optional[List[dict]]) -> str:
-    """Produce a simple rule-based answer from tickets when the model is unavailable.
-
-    Handles a few common questions: lowest/highest grade, average score, list tickets,
-    and ticket details. Falls back to returning the ticket context when unsure.
-    """
+    """Rule-based answers from ticket data when the model is unavailable."""
     if not tickets:
         return "No evaluations available to answer this question."
 
@@ -51,45 +47,40 @@ def _simple_fallback_answer(messages: list[dict], tickets: Optional[List[dict]])
     if not last_user:
         return build_context(tickets)
 
-    # Lowest / highest
-    if "lowest" in last_user or "lowest grade" in last_user or "lowest score" in last_user:
+    if "lowest" in last_user:
         t = min(tickets, key=lambda x: x.get("score", 0))
         return f"Lowest score: {t['subject']} (ticket {t['id']}) — {t.get('score', '?')} / 100, grade {t.get('grade','?')}"
-    if "highest" in last_user or "highest grade" in last_user or "highest score" in last_user:
+    if "highest" in last_user:
         t = max(tickets, key=lambda x: x.get("score", 0))
         return f"Highest score: {t['subject']} (ticket {t['id']}) — {t.get('score', '?')} / 100, grade {t.get('grade','?')}"
 
-    # Average
-    if "average" in last_user or "mean" in last_user or "moyenne" in last_user:
+    if "average" in last_user or "mean" in last_user:
         vals = [t.get("score", 0) for t in tickets]
         avg = sum(vals) / len(vals) if vals else 0
         return f"Average score across {len(vals)} tickets: {round(avg,1)} / 100"
 
-    # List tickets
     if "list" in last_user or "tickets" in last_user:
         lines = []
         for t in tickets[:10]:
             lines.append(f"- {t['id']}: {t['subject']} — {t.get('score','?')}/100 ({t.get('grade','?')})")
         return "Tickets:\n" + "\n".join(lines)
 
-    # Ticket details by id or subject
     for t in tickets:
         if str(t.get('id')) in last_user or (t.get('subject') and t['subject'].lower() in last_user):
             details = ", ".join(f"{d['label']}={d['value']}/{d['max']}" for d in t.get('details', []))
             return f"Ticket {t['id']} — {t['subject']}: score {t.get('score','?')} /100, grade {t.get('grade','?')}. Details: {details}"
 
-    # Fallback: return context
     return build_context(tickets)
 
 
 async def chat(messages: list[dict], context: str, tickets: Optional[List[dict]] = None) -> tuple[str, str]:
-    """Retourne (réponse, modèle_utilisé)."""
+    """Return (reply, model_used)."""
     payload = {
         "model": settings.OLLAMA_MODEL,
         "stream": False,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": "CONTEXTE\n" + context},
+            {"role": "system", "content": "CONTEXT\n" + context},
             *messages,
         ],
     }
@@ -99,17 +90,16 @@ async def chat(messages: list[dict], context: str, tickets: Optional[List[dict]]
             r.raise_for_status()
             data = r.json()
             reply = data.get("message", {}).get("content", "").strip()
-            return reply or "(réponse vide du modèle)", settings.OLLAMA_MODEL
-    except Exception as exc:  # noqa: BLE001 — repli volontaire
-        # Try a simple rule-based fallback that answers common questions using ticket data.
+            return reply or "(empty model response)", settings.OLLAMA_MODEL
+    except Exception as exc:  # noqa: BLE001
         try:
             answer = _simple_fallback_answer(messages, tickets)
             return answer + "\n\n(software fallback: model unavailable)", "fallback"
         except Exception:
             return (
-                "⚠️ Le modèle local (Ollama) n'est pas joignable. "
-                "Vérifiez qu'Ollama tourne et que le modèle est téléchargé "
+                f"⚠️ Local model (Ollama) is unreachable. "
+                f"Make sure Ollama is running and the model is downloaded "
                 f"(`ollama pull {settings.OLLAMA_MODEL}`). "
-                f"Détail technique : {type(exc).__name__}.\n\n"
-                "Voici tout de même le contexte des évaluations :\n" + context
+                f"Technical detail: {type(exc).__name__}.\n\n"
+                "Here is the evaluation context anyway:\n" + context
             ), "fallback"

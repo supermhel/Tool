@@ -8,11 +8,11 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chatbot"])
 
 
 @router.post("", response_model=ChatResponse,
-             summary="Pose une question en langage naturel sur les évaluations")
+             summary="Ask a natural-language question about evaluations")
 async def post_chat(req: ChatRequest):
-    """Le chatbot s'appuie sur le contexte des tickets. Si `ticket_id` est fourni,
-    le contexte est restreint à ce ticket ; sinon il porte sur l'ensemble.
-    L'inférence est faite par le modèle open source local (Ollama)."""
+    """The chatbot uses ticket context. If `ticket_id` is provided the context
+    is restricted to that ticket; otherwise it covers all tickets.
+    Inference is handled by the local open-source model (Ollama)."""
     if req.ticket_id:
         t = store.get(req.ticket_id)
         tickets = [t] if t else []
@@ -21,7 +21,6 @@ async def post_chat(req: ChatRequest):
 
     context = build_context(tickets)
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
-    # pass the tickets list to the chat client so the fallback can compute answers
     reply, model = await chat(messages, context, tickets)
 
     return ChatResponse(

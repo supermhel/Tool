@@ -1,16 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import YAML from "js-yaml";
 import mammoth from "mammoth";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-// Configure pdfjs worker for browser usage (CDN fallback)
-try {
-  if (pdfjsLib.GlobalWorkerOptions) {
-    const v = pdfjsLib.version || '3.8.162';
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${v}/build/pdf.worker.min.js`;
-  }
-} catch (e) {
-  // ignore
-}
 import {
   Activity, Server, HeartPulse, FileText, FileJson, Trash2,
   Send, Bot, Plug, CheckCircle2, XCircle, Loader2, ClipboardList,
@@ -109,19 +99,6 @@ function UploadTemplate({ onUpload }) {
     if (!f) return;
     const name = (f.name || "").toLowerCase();
     let txt = "";
-    async function extractPdfText(buffer) {
-      const loadingTask = pdfjsLib.getDocument({ data: buffer });
-      const pdf = await loadingTask.promise;
-      let full = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        const strings = content.items.map((it) => it.str || it.value || '');
-        full += strings.join(' ') + '\n';
-      }
-      return full;
-    }
-
     async function extractDocxText(buffer) {
       const res = await mammoth.extractRawText({ arrayBuffer: buffer });
       return res.value || "";
@@ -168,10 +145,6 @@ function UploadTemplate({ onUpload }) {
         const buf = await f.arrayBuffer();
         txt = await extractDocxText(buf);
         tpl = extractStructuredFromText(txt);
-      } else if (name.endsWith('.pdf')) {
-        const buf = await f.arrayBuffer();
-        txt = await extractPdfText(buf);
-        tpl = extractStructuredFromText(txt);
       } else {
         // unknown extension: try text-based heuristics
         txt = await f.text();
@@ -200,7 +173,7 @@ function UploadTemplate({ onUpload }) {
       >
         Load personal template
       </button>
-      <input ref={fileRef} type="file" accept="application/json,.json,.yaml,.yml,text/csv,.csv,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf" onChange={handleFile} className="hidden" />
+      <input ref={fileRef} type="file" accept="application/json,.json,.yaml,.yml,text/csv,.csv,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleFile} className="hidden" />
       {err && <div className="text-sm text-bad">{err}</div>}
     </div>
   );

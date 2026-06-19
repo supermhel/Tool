@@ -1,0 +1,45 @@
+services:
+  # Modèle open source local
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Décommentez pour l'accélération GPU NVIDIA :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  backend:
+    build: ./backend
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: mistral:7b-instruct
+      CORS_ORIGINS: "*"
+      DATA_DIR: /app/data
+      # API_KEY: change-me-en-prod   # active la protection par clé
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  backend_data:

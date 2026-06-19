@@ -1,0 +1,9 @@
+{
+  "id": "custom_json",
+  "name": "Custom JSON Template",
+  "criteria": [
+    {"id": "steps", "label": "Steps", "max": 10, "weight": 2, "detail": "Number of steps"},
+    {"id": "automation", "label": "Automation", "max": 10, "weight": 1, "detail": "Degree of automation"}
+  ],
+  "scope": { "covered": ["onboarding", "payments"], "excluded": [["security","use security template"]] }
+}

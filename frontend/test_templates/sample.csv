@@ -1,0 +1,3 @@
+id,label,max,weight,detail
+steps,Steps,10,2,Number of steps
+automation,Automation,10,1,Degree of automation

@@ -40,24 +40,23 @@ Tech stack (detailed)
 Architecture diagram
 --------------------
 ```mermaid
+```mermaid
 flowchart TB
-  subgraph UI
-    F[Frontend (React/Vite/Tailwind)]
+  subgraph UI[UI]
+    F[Frontend: React / Vite / Tailwind]
   end
-  subgraph API
+  subgraph API[API]
     B[FastAPI backend]
     PDF[WeasyPrint]
   end
-  subgraph Model
-    O[Ollama (local model)]
+  subgraph MODEL[Model]
+    O[Ollama (local)]
   end
   F -->|REST /api/v1| B
   B -->|store| Storage[(JSON / Postgres)]
   B -->|export| PDF
   B -->|inference| O
-  note right of O: Local inference (optional)
-  click F "./frontend/src/App.jsx" "Open frontend source"
-  click B "./backend/app/main.py" "Open backend source"
+  %% Local inference is optional (note blocks / click handlers are not well supported by GitHub's Mermaid renderer)
 ```
 
 

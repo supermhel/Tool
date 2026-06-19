@@ -7,10 +7,5 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/index.py" }
   ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "vercel-python@0.5.0",
-      "maxDuration": 30
-    }
-  }
+  
 }

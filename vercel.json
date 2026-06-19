@@ -5,11 +5,11 @@
   "installCommand": "pip install -r requirements.txt",
   "framework": null,
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index" }
+    { "source": "/api/:path*", "destination": "/api/index.py" }
   ],
   "functions": {
     "api/index.py": {
-      "runtime": "python3.9",
+      "runtime": "vercel-python@0.5.0",
       "maxDuration": 30
     }
   }

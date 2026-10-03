@@ -3,8 +3,13 @@ dist/
 __pycache__/
 *.pyc
 backend/data/
+*.db
+*.db-wal
+*.db-shm
 .venv/
 .env
 .DS_Store
 .git_broken_*
 .vercel
+.pytest_cache/
+.coverage

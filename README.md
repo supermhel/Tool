@@ -1,90 +1,140 @@
-# Tool — Generic Evaluation Platform
+# Tool — evaluation and tender workbench
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![coverage](https://img.shields.io/badge/coverage-pytest-brightgreen)](#test-suite)
 
-Evaluate a **process**, a **system**, or **customer sentiment** using weighted criteria.
-Scores normalise to 0-100 and map to grades A→E. Results are saved as tickets exportable
-as PDF (via browser print) or JSON. A REST API exposes all features for integration, and
-a chatbot answers questions about recorded tickets.
+Score a **process**, a **system** or a **customer** against weighted criteria, or run a
+**tender evaluation**: independent blind scoring by several evaluators, consensus on
+disputed criteria, a sealed ranking, and an analysis of whether a different weighting
+would have changed the winner.
+
+- **Evaluations** → score 0–100 → grade A–E, saved as tickets (PDF via print, JSON).
+- **Custom templates**, versioned: import JSON / YAML / CSV, and every ticket pins the
+  version it was scored against.
+- **Tender workbench**: blind scoring with mandatory written justifications, divergence
+  flags, consensus, award, award report and per-bidder debrief letters.
+- **Weight-sensitivity analysis**: the exact weight change at which another bid takes the lead.
+- **Tamper-evident records**: tickets and the audit log are hash-chained.
+- **Organisation-scoped API keys**, a REST API (Swagger at `/docs`) and a chatbot over your tickets.
 
 ## Architecture
 
-```
-Frontend (React/Vite/Tailwind)  ──►  REST API (FastAPI)  ──►  Ticket storage (JSON / Upstash KV)
-        │                                   │
-        └── chatbot widget ────────────────►└──►  Ollama (local, optional) — fallback: rule-based
-```
-
 ```mermaid
 flowchart TB
-  UI[Frontend: React / Vite / Tailwind]
-  API[FastAPI backend]
-  STORE[(JSON file / Upstash KV)]
-  MODEL[Ollama — local only]
-  UI -->|REST /api/v1| API
+  UI[React / Vite / Tailwind]
+  API[FastAPI]
+  STORE[(SQLite file or Upstash KV)]
+  LLM[Ollama, optional]
+  UI -->|REST /api/v1 + X-API-Key| API
   API --> STORE
-  API -->|optional| MODEL
+  API -.->|chat, bid-text suggestions| LLM
 ```
 
-## Quick start (Docker — all-in-one)
+`backend/app/`: `routers/` (HTTP), `repo.py` (hash-chained tickets and audit log, versioned
+templates, tenders), `tenders.py` (workflow rules), `sensitivity.py`, `scoring.py`,
+`proposers.py` (evidence/score suggestions), `storage.py` (SQLite and Upstash document
+stores), `auth.py`, `ratelimit.py`.
 
+## Quick start
+
+**Docker (everything, including a local model)**
 ```bash
 docker compose up --build
-# Download the model once (optional — chatbot works without it):
-docker compose exec ollama ollama pull mistral:7b-instruct
+docker compose exec ollama ollama pull mistral:7b-instruct   # optional
 ```
+App at http://localhost:8080, API docs at http://localhost:8000/docs.
 
-- Application: http://localhost:8080
-- API + Swagger: http://localhost:8000/docs
-
-## Local start (without Docker)
-
-**Backend**
+**Local**
 ```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+cd backend && python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
 uvicorn app.main:app --reload          # http://localhost:8000/docs
 ```
-
-**Frontend**
 ```bash
-cd frontend
-npm install
-npm run dev                            # http://localhost:5173 (proxy /api → :8000)
+cd frontend && npm install && npm run dev   # http://localhost:5173 (proxies /api to :8000)
 ```
 
-**Chatbot (local open-source model — optional)**
-```bash
-# https://ollama.com
-ollama pull mistral:7b-instruct
-ollama serve
-```
+## Authentication and organisations
 
-> **Chatbot limitations**
->
-> Ollama runs **locally only**. On Vercel and other cloud deployments where Ollama is not
-> running, the chatbot automatically falls back to a deterministic rule-based responder
-> (lowest/highest score, average, ticket list). This fallback is labelled `model: fallback`
-> in the UI. To enable real inference in the cloud, self-host Ollama on a VM/container and
-> set `OLLAMA_URL` to point at it.
+Set `API_KEYS="key1:org-a:alice,key2:org-b"` (key, organisation, optional label). Send the key
+in the `X-API-Key` header; the UI has an **API key** button. Each key sees only its own
+organisation's tickets, templates, tenders and audit log, and the label is recorded as the
+actor in the audit log. **With keys on, the label is also the evaluator identity:** a key may
+only submit scores as its own label, so give each committee member a key labelled with their
+evaluator name (`key:org:alice`). An organiser key (any other label) can create tenders, close
+scoring and award, but cannot score. `GET /me` returns the caller's organisation and label. Without any keys the server runs in **open mode**: everyone shares one
+organisation named `default`. Do not expose open mode publicly. `GET /health` and
+`POST /sensitivity` stay open (the latter stores nothing).
+
+## Tender workflow
+
+1. **Create** a tender from a template. The criteria and weights are snapshotted *now*,
+   before any bid is scored.
+2. **Blind scoring.** Each evaluator scores every bidder on every criterion and must write a
+   justification. The API never returns score values while scoring is open, and the audit log
+   never contains them.
+3. **Close scoring** (requires every cell filled). Results are revealed. A criterion is
+   *divergent* when evaluators' scores differ by more than the tender's threshold (default
+   30% of the scale).
+4. **Consensus.** Each divergent criterion needs an agreed value and a justification. The
+   rest default to the mean.
+5. **Award.** The award is claimed atomically (`consensus` → `awarding`), then one sealed ticket
+   per bidder is written and the tender becomes `awarded` and read-only. An interrupted award can
+   be resumed by calling award again: tickets already written are kept, never duplicated. The
+   ranking uses exact totals (equal totals share a rank; there is no automatic tie-break). The
+   award report and debrief letters (PDF via print) then become available.
+
+Suggestions from bid text (`POST /tenders/{id}/propose`) are **advice only** and are never saved:
+a human enters every score. With `PROPOSER=ollama` a local model proposes a score, a
+confidence and a quote; any quote not found verbatim in the text is dropped and the confidence
+capped. The default `rules` provider only finds the most relevant passage.
+
+### Sensitivity analysis
+
+For leader *a* and rival *b*, the lead is `N = Σ wⱼ(rₐⱼ − r_bⱼ)`. Scaling one weight by
+`(1 + t)` ties the two at `t* = −N / (wᵢ(rₐᵢ − r_bᵢ))`. That is exact, so no sampling is
+involved. The result lists, per criterion, the relative change that would let a rival catch up,
+and whether it falls inside the plausible-dispute band you choose (default ±20%).
+
+## Evaluation model
+
+Score = weighted average of criterion attainment (`value / max`), 0–100. Every criterion must
+be scored and every value must lie within `0..max`; malformed input returns 422 rather than a
+silently wrong number.
+
+| Grade | Threshold |
+|-------|-----------|
+| A — Excellent | ≥ 85 |
+| B — Good | ≥ 70 |
+| C — Watch | ≥ 55 |
+| D — Poor | ≥ 40 |
+| E — Critical | < 40 |
 
 ## Endpoints
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET  | `/api/v1/templates` | Templates + criteria + scope |
-| POST | `/api/v1/evaluations` | Create evaluation → ticket (score + grade) |
-| GET  | `/api/v1/tickets` | List tickets |
-| GET  | `/api/v1/tickets/{id}` | Ticket detail |
-| GET  | `/api/v1/tickets/{id}/export?format=pdf\|json\|html` | Export |
-| POST | `/api/v1/chat` | Ask the chatbot (context = tickets) |
-| GET  | `/api/v1/health` | Health check |
+| GET / POST | `/api/v1/templates` | List (latest versions) / create or add a version |
+| POST | `/api/v1/templates/import` | Import JSON, YAML or CSV text |
+| GET | `/api/v1/templates/{id}[?version=]`, `/versions` | Read a template |
+| DELETE | `/api/v1/templates/{id}` | Delete a custom template |
+| POST | `/api/v1/evaluations` | Score a subject → sealed ticket |
+| GET | `/api/v1/tickets?limit=&offset=`, `/tickets/{id}` | List / detail |
+| GET | `/api/v1/tickets/verify` | Verify the hash chain |
+| DELETE | `/api/v1/tickets/{id}` | Hide a ticket (it stays in the chain) |
+| GET | `/api/v1/tickets/{id}/export?format=pdf\|json\|html` | Export |
+| POST/GET | `/api/v1/tenders`, `/tenders/{id}` | Create / read a tender |
+| POST | `/tenders/{id}/scores`, `/close-scoring`, `/award` | Workflow steps |
+| PUT | `/tenders/{id}/consensus` | Consensus value for a divergent criterion |
+| GET | `/tenders/{id}/results`, `/sensitivity`, `/report`, `/debrief/{bidder}` | Analysis and documents |
+| POST | `/tenders/{id}/propose` | Evidence / score suggestions (advice only) |
+| POST | `/api/v1/sensitivity` | Stateless weight-sensitivity calculator |
+| GET | `/api/v1/audit`, `/audit/verify`, `/audit/export` | Audit log |
+| POST | `/api/v1/chat` | Ask about your tickets |
+| GET | `/api/v1/health`, `/api/v1/me` | Health check; caller's organisation and label |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/evaluations \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "X-API-Key: $KEY" \
   -d '{"template_id":"process","subject":"Onboarding","scores":{"steps":8,"bottlenecks":6,"compliance":9,"automation":5,"repeatability":7}}'
 ```
 
@@ -92,63 +142,45 @@ curl -X POST http://localhost:8000/api/v1/evaluations \
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
-| `OLLAMA_MODEL` | `mistral:7b-instruct` | Model name |
+| `API_KEYS` | *(empty)* | `key:org[:label],…`. Empty = open mode |
+| `API_KEY` | *(empty)* | Legacy single key, maps to org `default` |
+| `DB_PATH` | `backend/data/tool.db` | SQLite file |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | *(empty)* | Use Upstash / Vercel KV instead of SQLite |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (restrict in production) |
-| `API_KEY` | *(empty)* | If set, requires `X-API-Key` header on all requests |
-| `DATA_DIR` | `backend/data` | Ticket storage folder (JsonStore) |
-| `KV_REST_API_URL` | *(empty)* | Upstash / Vercel KV URL — activates cloud persistence |
-| `KV_REST_API_TOKEN` | *(empty)* | Upstash / Vercel KV token |
+| `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT` | `http://localhost:11434`, `mistral:7b-instruct`, `60` | Local model |
+| `PROPOSER` | `rules` | `rules` or `ollama` for bid-text suggestions |
+| `RATE_LIMIT_PER_MIN` | `30` | Per caller, chat and propose only; `0` disables |
 
-### Enabling Vercel KV persistence
+Chatbot without Ollama: it falls back to a deterministic answerer (lowest / highest / average /
+list) and labels the reply `model: fallback`.
 
-1. In your Vercel project dashboard add the **KV** integration.
-2. Vercel automatically injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
-3. The backend detects them on startup and switches from the ephemeral `/tmp` JSON store
-   to the Upstash Redis store automatically. No code change needed.
+## Deploying on Vercel
 
-## PDF export
+`api/index.py` serves the API. The filesystem is ephemeral there: add the **KV** integration
+(Upstash) for persistence, and set `API_KEYS`, otherwise the deployment is open mode.
+Ollama does not run on Vercel; point `OLLAMA_URL` at a host you run.
 
-PDF is produced **client-side** via the browser's native print dialog (`window.print()`).
-Clicking the PDF button opens a styled, print-optimised HTML page; the print dialog appears
-automatically. No native system libraries (WeasyPrint / Pango / Cairo) are required.
+## Known limits
 
-## Evaluation model
+- **Tamper evidence, not tamper proof.** Someone who can rewrite the whole database can rebuild
+  a consistent chain. Anchor the head hash (`GET /tickets/verify` → `head`) somewhere you trust.
+- **Concurrent writers.** Chain heads and tender documents are updated with compare-and-set
+  and retried, so simultaneous writers cannot fork a chain or overwrite each other's scores
+  (SQLite: `BEGIN IMMEDIATE`; Upstash: a server-side Lua script). The Upstash path is tested
+  against a local HTTP fake of its REST API, not the real service. `verify` run while another
+  *process* is mid-append can briefly report a false alarm; re-run it.
+- **Evaluator identity** is enforced only when API keys are on. In open mode anyone can score as
+  any evaluator.
+- **Size.** A tender is capped at 3,000 scores (bidders × criteria × evaluators) because it is
+  stored as one document.
+- **Soft delete.** Hiding a ticket keeps its record in the chain; erasing personal data
+  (GDPR) needs a separate redaction process.
+- **PDF** is the browser's print dialog, not a server-rendered file.
 
-Score = weighted average of criterion attainment (`value / max`), normalised to 100.
-
-| Grade | Threshold |
-|-------|-----------|
-| A — Excellent | ≥ 85 |
-| B — Bon | ≥ 70 |
-| C — À surveiller | ≥ 55 |
-| D — Insuffisant | ≥ 40 |
-| E — Critique | < 40 |
-
-## Test suite
+## Tests
 
 ```bash
-cd backend
-pip install -r requirements-dev.txt
-pytest -v
+cd backend && python -m pytest -q --cov=app      # 204 tests, ~98% line coverage
+cd frontend && npm run build && npm audit --omit=dev
 ```
-
-Tests cover: scoring logic, JsonStore CRUD, and all REST endpoints (evaluations, tickets,
-export formats, health).
-
-## Structure
-
-```
-backend/
-  app/  main · config · models · scoring · storage · pdf · ollama_client
-  routers/  templates · evaluations · tickets · chat
-  tests/    test_scoring · test_storage · test_api
-  requirements.txt          runtime deps
-  requirements-dev.txt      + pytest
-api/
-  index.py          Vercel ASGI shim
-  requirements.txt  mirrors backend/requirements.txt
-frontend/
-  src/  App.jsx · api.js
-docker-compose.yml  frontend + backend + ollama
-```
+CI (`.github/workflows/ci.yml`) runs both.

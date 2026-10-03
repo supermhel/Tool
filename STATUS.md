@@ -11,7 +11,7 @@ Verified the earlier work, closed most open items, and ran two independent subag
 | Item | State | Evidence |
 |------|-------|----------|
 | Backend suite | DONE | PROVEN: 204 passed, 97.8% coverage (Python 3.13 local). An earlier 189-test run also passed on Python 3.12 in Docker. |
-| Docker images build | DONE | PROVEN earlier: both Dockerfiles built; 189 tests also passed on Python 3.12 in a container. Docker Desktop later stopped and was not restarted (project rule), so the final 204 were not re-run on 3.12 and two `tool-backend-verify` / `tool-frontend-verify` images remain to delete: start Docker Desktop, then `docker image rm tool-backend-verify tool-frontend-verify` |
+| Docker images build + Python 3.12 | DONE | PROVEN: both Dockerfiles built; final 204 tests pass on Python 3.12 in a container (97.8%); verify images removed |
 | Review fixes (races, CAS, ranking, 500s) | DONE | PROVEN: 15 regression tests failed on the reviewed code, pass now; CAS mutation-checked |
 | Evaluator identity under keys | DONE | PROVEN: `test_auth.py` + live UI (organiser key blocked, alice key locked to alice) |
 | Report/debrief blob tabs | DONE | PROVEN with authenticated fetch of the blob content; the real new-tab navigation itself was mocked, not observed |
@@ -19,14 +19,14 @@ Verified the earlier work, closed most open items, and ran two independent subag
 | Frontend | DONE | PROVEN: build 204 kB, detector 0 findings, 375 px no overflow, flows driven in the UI |
 | Dev-only npm advisory (`braces` via tailwindcss 3) | OPEN, accepted | Appeared 2026-10-03: stack-exhaustion DoS, **no patched release exists** (affects all versions); the only npm "fix" is a breaking Tailwind 3→4 migration. Build-time glob library fed our own config, not shipped; production audit is 0. Revisit when braces or Tailwind 4 migration lands |
 | Secrets / hygiene | DONE | PROVEN: no key-like strings in git-visible files, no tracked `.env`/`.db`, stray `.coverage` removed and ignored |
-| Vercel | OPEN | Production is READY but runs old commit `fb7750b` (v1) behind SSO. Not redeployed (outward-facing, not requested) |
+| Vercel | PARTIAL | Branch preview deployment of the new code is READY (build OK; SSO-protected, so the running app was not exercised). Production still runs old commit `fb7750b`; it updates when PR #1 is merged to `main` |
 | Ollama / Upstash real services | OPEN | Verified over real HTTP against local fakes only; neither real service was available |
-| CI workflow | OPEN | Its commands were replicated locally (above) and the YAML parses; it has never run on GitHub |
-| Commit | OPEN | Not requested; all work uncommitted on `main` |
+| CI workflow | DONE | PROVEN: first GitHub run on PR #1 (draft) → 4/4 checks passing, 0 failing, merge state CLEAN (2026-10-03) |
+| Commit | DONE | PROVEN: 3 commits on `feat/tender-workbench`, pushed, draft PR https://github.com/supermhel/Tool/pull/1 . `main` untouched |
 | Jev-style provider, vertical validation | OPEN | `ScoreProposer` is the plug-in point; demand still unvalidated |
 
 ## Open threads
-- **Commit.** All work is uncommitted on `main`. Suggested split: backend core, tender workbench, frontend, docs/CI.
+- **Merge.** PR #1 is a draft; marking it ready and merging to `main` deploys production. That decision is the owner's.
 - **Evaluator identity** is enforced only with API keys on (key label = evaluator). In open mode anyone can score as anyone.
 - **Chain integrity** is tamper-evident, not tamper-proof; anchor the head hash externally for stronger guarantees. Concurrent writers are handled by compare-and-set; the Upstash path is proven only against a local HTTP fake.
 - **Vertical validation.** Still a hypothesis. The free sensitivity calculator (`#sensitivity`) is the cheapest way to see whether strangers use it. No customer conversations have happened.

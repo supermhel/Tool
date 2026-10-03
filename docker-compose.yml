@@ -1,5 +1,5 @@
 services:
-  # Modèle open source local
+  # Local open-source model (optional: the app falls back to rules without it)
   ollama:
     image: ollama/ollama:latest
     volumes:
@@ -7,7 +7,7 @@ services:
     ports:
       - "11434:11434"
     restart: unless-stopped
-    # Décommentez pour l'accélération GPU NVIDIA :
+    # Uncomment for NVIDIA GPU acceleration:
     # deploy:
     #   resources:
     #     reservations:
@@ -22,8 +22,11 @@ services:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: mistral:7b-instruct
       CORS_ORIGINS: "*"
-      DATA_DIR: /app/data
-      # API_KEY: change-me-en-prod   # active la protection par clé
+      DB_PATH: /app/data/tool.db
+      # Enable auth (one key per organisation; data is isolated per organisation):
+      # API_KEYS: "change-me-a:acme:alice,change-me-b:globex"
+      # Use the local model for tender score proposals instead of the offline rules baseline:
+      # PROPOSER: ollama
     volumes:
       - backend_data:/app/data
     depends_on:

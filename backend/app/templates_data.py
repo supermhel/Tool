@@ -118,10 +118,18 @@ TEMPLATES = {
 }
 
 
+for _t in TEMPLATES.values():
+    _t.setdefault("version", 1)
+    _t.setdefault("builtin", True)
+
+BUILTIN_IDS = tuple(TEMPLATES)
+
+
 def list_templates():
-    """Return templates in order, ready for the API."""
-    return [TEMPLATES[k] for k in ("process", "system", "sentiment")]
+    """Built-in templates in display order."""
+    return [TEMPLATES[k] for k in BUILTIN_IDS]
 
 
 def get_template(template_id: str):
+    """Built-in template by id (custom templates live in repo.templates)."""
     return TEMPLATES.get(template_id)

@@ -4,46 +4,45 @@ Start with:  uvicorn app.main:app --reload
 Auto Swagger docs at /docs, ReDoc at /redoc.
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import Caller, auth_enabled, get_caller
 from .config import settings
-from .routers import templates, evaluations, tickets, chat
-
-
-def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Optional guard: active only when API_KEY is set."""
-    if settings.API_KEY and x_api_key != settings.API_KEY:
-        raise HTTPException(401, "Invalid or missing API key (header X-Api-Key).")
-
+from .routers import audit, chat, evaluations, sensitivity, templates, tenders, tickets
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.VERSION,
     description=(
-        "Generic evaluation platform API. Three built-in templates "
-        "(process, system, customer sentiment): weighted criteria → score → grade. "
-        "Tickets exportable as PDF/JSON, REST API for integration, "
-        "chatbot backed by a local open-source model."
+        "Weighted-criteria evaluation platform. Built-in and custom (versioned) templates "
+        "→ score → grade, tamper-evident tickets, a tender evaluation workbench "
+        "(blind multi-evaluator scoring, consensus, weight-sensitivity analysis, award "
+        "reports), an audit log, and a chatbot over your tickets. All data is scoped to "
+        "the organisation behind your API key (header X-API-Key)."
     ),
-    dependencies=[Depends(require_api_key)],
 )
 
+# Credentials are never used (auth is a header, not a cookie), so wildcard origins are safe to allow.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(templates.router)
-app.include_router(evaluations.router)
-app.include_router(tickets.router)
-app.include_router(chat.router)
+for module in (templates, evaluations, tickets, chat, tenders, sensitivity, audit):
+    app.include_router(module.router)
 
 
 @app.get("/api/v1/health", tags=["system"], summary="Health check")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.VERSION,
-            "model": settings.OLLAMA_MODEL}
+            "model": settings.OLLAMA_MODEL, "auth": auth_enabled()}
+
+
+@app.get("/api/v1/me", tags=["system"], summary="Who am I? (organisation and label of the calling key)")
+def me(caller: Caller = Depends(get_caller)):
+    """With auth on, `label` is the evaluator name this key may score as."""
+    return {"org": caller.org, "label": caller.label, "auth": auth_enabled()}

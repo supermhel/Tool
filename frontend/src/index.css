@@ -10,8 +10,9 @@
   --panel2:    #192034;
   --border:    #1e2b42;
   --border2:   #2a3d5c;
-  --muted:     #7a8aaa;
-  --faint:     #3d4f6e;
+  /* Text tiers: both clear 4.5:1 on --panel (muted ≈ 7.6, faint ≈ 4.8). */
+  --muted:     #9aa8c4;
+  --faint:     #7586a8;
   --text:      #dde4f0;
   --acc:       #4f7eff;
   --acc-glow:  #4f7eff33;
@@ -31,21 +32,26 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.6;
+  caret-color: var(--acc);
   background-image:
     radial-gradient(ellipse 900px 500px at 70% -5%, #0a1a3a 0%, transparent 60%),
     radial-gradient(ellipse 600px 400px at 5% 80%, #0a1f2e 0%, transparent 55%);
 }
+
+::selection { background: var(--acc-glow); color: #fff; }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+input, textarea, select, button { font: inherit; color: inherit; }
+td, th, .tabular-nums { font-variant-numeric: tabular-nums; }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
 
-/* ── Range input ───────────────────────────────────────────────────────── */
-input[type="range"] {
-  accent-color: var(--acc);
-  cursor: pointer;
-}
+input[type="range"] { accent-color: var(--acc); cursor: pointer; }
+
+/* Grid items default to min-width:auto and would stretch the page around wide tables. */
+.grid > * { min-width: 0; }
 
 /* ── Tailwind custom utilities ─────────────────────────────────────────── */
 @layer utilities {
@@ -66,32 +72,75 @@ input[type="range"] {
   .bg-acc2      { background-color: var(--acc2); }
   .bg-bad       { background-color: var(--bad); }
   .glow-acc     { box-shadow: 0 0 0 1px var(--acc), 0 0 16px var(--acc-glow); }
-
-  /* Cards */
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 20px;
-  }
-  .card-hover:hover {
-    border-color: var(--border2);
-    background: var(--panel2);
-  }
-
-  /* Gradient accent text */
-  .text-gradient {
-    background: linear-gradient(90deg, var(--acc), var(--acc2));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
 }
 
-/* ── Grade pill animation ──────────────────────────────────────────────── */
-@keyframes pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(79,126,255,.4); }
-  70%  { box-shadow: 0 0 0 8px rgba(79,126,255,0); }
-  100% { box-shadow: 0 0 0 0 rgba(79,126,255,0); }
+/* ── Components ────────────────────────────────────────────────────────── */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
 }
-.grade-a { animation: pulse-ring 2.5s ease-out infinite; }
+.card-hover { transition: border-color 150ms ease-out, background-color 150ms ease-out; }
+.card-hover:hover { border-color: var(--border2); background: var(--panel2); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 14px; border-radius: 12px;
+  border: 1px solid var(--border2); background: transparent; color: var(--text);
+  font-size: 13px; font-weight: 600; line-height: 1.2; cursor: pointer;
+  transition: border-color 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out, filter 150ms ease-out;
+}
+.btn:hover:not(:disabled) { border-color: var(--acc); color: var(--acc); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+.btn-primary:hover:not(:disabled) { color: #fff; filter: brightness(1.12); }
+.btn-danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+.btn-sm { padding: 5px 10px; border-radius: 10px; font-size: 12px; }
+
+.input {
+  width: 100%; padding: 9px 12px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 14px; outline: none; transition: border-color 150ms ease-out;
+}
+.input:focus { border-color: var(--acc); }
+.input::placeholder { color: var(--faint); }
+.input:disabled { opacity: .6; }
+.input-sm { padding: 6px 9px; border-radius: 10px; font-size: 13px; }
+textarea.input { resize: vertical; }
+
+.label { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.hint { font-size: 12px; color: var(--faint); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--border2); font-size: 11px; font-weight: 600; color: var(--muted);
+  white-space: nowrap;
+}
+.chip-good { color: var(--good); border-color: #34c47a55; background: #34c47a14; }
+.chip-warn { color: var(--warn); border-color: #f0a74255; background: #f0a74214; }
+.chip-bad  { color: var(--bad);  border-color: #e0555555; background: #e0555514; }
+.chip-acc  { color: var(--acc);  border-color: #4f7eff55; background: #4f7eff14; }
+
+.tabs { display: flex; gap: 4px; overflow-x: auto; }
+.tab {
+  padding: 12px 14px; border: 0; border-bottom: 2px solid transparent; background: none;
+  color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: color 150ms ease-out, border-color 150ms ease-out;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--acc); }
+
+.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data th {
+  padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--faint);
+  border-bottom: 1px solid var(--border);
+}
+.data td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data tr:last-child td { border-bottom: 0; }
+.data .num { text-align: right; white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

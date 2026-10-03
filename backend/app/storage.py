@@ -1,148 +1,224 @@
-"""Ticket storage.
+"""Document store.
 
-Two implementations sharing the same interface:
+One tiny interface, two backends:
 
-- JsonStore    — local JSON file (dev / Docker). Active by default.
-- UpstashStore — Upstash Redis REST API (Vercel KV and any cloud deployment).
-  Auto-selected when KV_REST_API_URL and KV_REST_API_TOKEN are set
-  (Vercel injects these automatically when the KV integration is enabled).
+- SqliteDocStore  — default. File-backed, transactional, stdlib only.
+- UpstashDocStore — Upstash Redis REST API (Vercel KV). Auto-selected when
+  KV_REST_API_URL and KV_REST_API_TOKEN are set.
 
-Redis layout:
-  tickets_index  — list of IDs (LPUSH → newest-first order)
-  ticket:{id}    — JSON-serialised ticket
+A document is addressed by (kind, org, id). `kind` is a namespace such as
+"ticket", "template", "tender" or "audit"; `org` scopes it to one tenant.
+Listing is newest-first by first insertion; overwriting keeps the position.
+
+Domain logic (hash chains, tenders, ...) lives in repo.py, not here.
 """
 
 import json
 import os
+import sqlite3
 import threading
-import uuid
-from datetime import datetime, timezone
 
 import httpx
 
-_DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data"))
-_DATA_FILE = os.path.join(_DATA_DIR, "tickets.json")
-_lock = threading.Lock()
+_DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "data", "tool.db")
 
 
-class JsonStore:
-    def __init__(self, path: str = _DATA_FILE):
-        self.path = path
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        if not os.path.exists(self.path):
-            self._write([])
+class SqliteDocStore:
+    def __init__(self, path: str | None = None):
+        self.path = path or os.getenv("DB_PATH") or _DEFAULT_DB
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        self._lock = threading.RLock()
+        # One shared connection guarded by the lock: opening a connection per call is slow
+        # and `with sqlite3.connect()` does not close it.
+        self._c = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+        self._c.execute("PRAGMA journal_mode=WAL")
+        self._c.execute("PRAGMA synchronous=NORMAL")  # safe with WAL; avoids an fsync per commit
+        with self._c as c:
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS docs (
+                       seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+                       kind TEXT NOT NULL,
+                       org  TEXT NOT NULL,
+                       id   TEXT NOT NULL,
+                       doc  TEXT NOT NULL,
+                       UNIQUE (kind, org, id))"""
+            )
 
-    def _read(self):
-        with open(self.path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    def close(self) -> None:
+        with self._lock:
+            self._c.close()
 
-    def _write(self, data):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self.path)
+    def put(self, kind: str, org: str, id: str, doc: dict) -> None:
+        with self._lock, self._c as c:
+            c.execute(
+                """INSERT INTO docs (kind, org, id, doc) VALUES (?, ?, ?, ?)
+                   ON CONFLICT (kind, org, id) DO UPDATE SET doc = excluded.doc""",
+                (kind, org, id, json.dumps(doc, ensure_ascii=False)),
+            )
 
-    def create(self, ticket: dict) -> dict:
-        with _lock:
-            data = self._read()
-            ticket = dict(ticket)
-            ticket["id"] = uuid.uuid4().hex[:12]
-            ticket["created_at"] = datetime.now(timezone.utc).isoformat()
-            data.insert(0, ticket)
-            self._write(data)
-            return ticket
+    def get(self, kind: str, org: str, id: str) -> dict | None:
+        with self._lock, self._c as c:
+            row = c.execute(
+                "SELECT doc FROM docs WHERE kind=? AND org=? AND id=?", (kind, org, id)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
 
-    def list(self) -> list:
-        with _lock:
-            return self._read()
+    def list(self, kind: str, org: str, limit: int = 100, offset: int = 0,
+             oldest_first: bool = False) -> list[dict]:
+        order = "ASC" if oldest_first else "DESC"
+        with self._lock, self._c as c:
+            rows = c.execute(
+                f"SELECT doc FROM docs WHERE kind=? AND org=? ORDER BY seq {order} LIMIT ? OFFSET ?",
+                (kind, org, limit, offset),
+            ).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
-    def get(self, ticket_id: str):
-        with _lock:
-            for t in self._read():
-                if t["id"] == ticket_id:
-                    return t
-            return None
+    def count(self, kind: str, org: str) -> int:
+        with self._lock, self._c as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM docs WHERE kind=? AND org=?", (kind, org)
+            ).fetchone()[0]
 
-    def delete(self, ticket_id: str) -> bool:
-        with _lock:
-            data = self._read()
-            new = [t for t in data if t["id"] != ticket_id]
-            if len(new) == len(data):
-                return False
-            self._write(new)
-            return True
+    def delete(self, kind: str, org: str, id: str) -> bool:
+        with self._lock, self._c as c:
+            cur = c.execute(
+                "DELETE FROM docs WHERE kind=? AND org=? AND id=?", (kind, org, id)
+            )
+            return cur.rowcount > 0
+
+    def compare_and_set(self, kind: str, org: str, id: str, expected: dict | None, new: dict) -> bool:
+        """Atomically replace a document only if it still equals `expected` (None = absent)."""
+        with self._lock:
+            # BEGIN IMMEDIATE takes the write lock before the read, so the read-compare-write
+            # is atomic across connections and processes, not just across threads here.
+            self._c.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._c.execute(
+                    "SELECT doc FROM docs WHERE kind=? AND org=? AND id=?", (kind, org, id)
+                ).fetchone()
+                current = json.loads(row[0]) if row else None
+                if current != expected:
+                    self._c.rollback()
+                    return False
+                self._c.execute(
+                    """INSERT INTO docs (kind, org, id, doc) VALUES (?, ?, ?, ?)
+                       ON CONFLICT (kind, org, id) DO UPDATE SET doc = excluded.doc""",
+                    (kind, org, id, json.dumps(new, ensure_ascii=False)),
+                )
+                self._c.commit()
+                return True
+            except BaseException:
+                self._c.rollback()
+                raise
 
 
-class UpstashStore:
-    """Persistence via Upstash Redis REST API (Vercel KV-compatible).
+class UpstashDocStore:
+    """Same interface over the Upstash Redis REST API.
 
-    Set KV_REST_API_URL and KV_REST_API_TOKEN to activate.
+    Layout: key `doc:{kind}:{org}:{id}` holds the JSON; list `idx:{kind}:{org}`
+    holds ids newest-first (LPUSH). Concurrent writers are last-write-wins.
     """
 
     def __init__(self):
         self._url = os.environ["KV_REST_API_URL"].rstrip("/")
-        self._token = os.environ["KV_REST_API_TOKEN"]
+        # One pooled client: building an SSL context per request costs more than the round trip.
+        self._client = httpx.Client(
+            headers={"Authorization": f"Bearer {os.environ['KV_REST_API_TOKEN']}"}, timeout=10.0)
 
-    def _pipeline(self, *commands: list) -> list[dict]:
-        r = httpx.post(
-            f"{self._url}/pipeline",
-            headers={"Authorization": f"Bearer {self._token}"},
-            json=list(commands),
-            timeout=10.0,
-        )
+    def close(self) -> None:
+        self._client.close()
+
+    def _post(self, path: str, body) -> object:
+        r = self._client.post(f"{self._url}{path}", json=body)
         r.raise_for_status()
         return r.json()
 
-    def _cmd(self, *args) -> object:
-        r = httpx.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            json=list(args),
-            timeout=10.0,
-        )
-        r.raise_for_status()
-        return r.json()["result"]
+    def _cmd(self, *args):
+        return self._post("", list(args))["result"]
 
-    def create(self, ticket: dict) -> dict:
-        ticket = dict(ticket)
-        ticket["id"] = uuid.uuid4().hex[:12]
-        ticket["created_at"] = datetime.now(timezone.utc).isoformat()
-        self._pipeline(
-            ["SET", f"ticket:{ticket['id']}", json.dumps(ticket, ensure_ascii=False)],
-            ["LPUSH", "tickets_index", ticket["id"]],
-        )
-        return ticket
+    def _pipeline(self, *commands: list) -> list[dict]:
+        return self._post("/pipeline", list(commands))
 
-    def list(self) -> list:
-        ids = self._cmd("LRANGE", "tickets_index", "0", "-1") or []
-        if not ids:
-            return []
-        results = self._pipeline(*[["GET", f"ticket:{tid}"] for tid in ids])
-        out = []
-        for item in results:
-            raw = item.get("result")
-            if raw:
-                out.append(json.loads(raw))
-        return out
+    @staticmethod
+    def _key(kind, org, id) -> str:
+        return f"doc:{kind}:{org}:{id}"
 
-    def get(self, ticket_id: str):
-        raw = self._cmd("GET", f"ticket:{ticket_id}")
+    @staticmethod
+    def _idx(kind, org) -> str:
+        return f"idx:{kind}:{org}"
+
+    def put(self, kind: str, org: str, id: str, doc: dict) -> None:
+        raw = json.dumps(doc, ensure_ascii=False)
+        created = self._cmd("SET", self._key(kind, org, id), raw, "NX")
+        if created:
+            self._cmd("LPUSH", self._idx(kind, org), id)
+        else:
+            self._cmd("SET", self._key(kind, org, id), raw)
+
+    def get(self, kind: str, org: str, id: str) -> dict | None:
+        raw = self._cmd("GET", self._key(kind, org, id))
         return json.loads(raw) if raw else None
 
-    def delete(self, ticket_id: str) -> bool:
-        if not self._cmd("EXISTS", f"ticket:{ticket_id}"):
+    def list(self, kind: str, org: str, limit: int = 100, offset: int = 0,
+             oldest_first: bool = False) -> list[dict]:
+        idx = self._idx(kind, org)
+        if oldest_first:
+            total = int(self._cmd("LLEN", idx) or 0)
+            start, stop = max(total - offset - limit, 0), total - offset - 1
+            if stop < 0:
+                return []
+            ids = list(reversed(self._cmd("LRANGE", idx, str(start), str(stop)) or []))
+        else:
+            ids = self._cmd("LRANGE", idx, str(offset), str(offset + limit - 1)) or []
+        if not ids:
+            return []
+        results = self._pipeline(*[["GET", self._key(kind, org, i)] for i in ids])
+        return [json.loads(r["result"]) for r in results if r.get("result")]
+
+    def count(self, kind: str, org: str) -> int:
+        return int(self._cmd("LLEN", self._idx(kind, org)) or 0)
+
+    def delete(self, kind: str, org: str, id: str) -> bool:
+        if not self._cmd("EXISTS", self._key(kind, org, id)):
             return False
-        self._pipeline(
-            ["DEL", f"ticket:{ticket_id}"],
-            ["LREM", "tickets_index", "0", ticket_id],
-        )
+        self._pipeline(["DEL", self._key(kind, org, id)],
+                       ["LREM", self._idx(kind, org), "0", id])
         return True
 
+    # Server-side compare-and-set (atomic in Redis). Expected/new are compared as the exact
+    # JSON text this store wrote, so both sides serialise with the same function.
+    CAS_SCRIPT = (
+        "local cur = redis.call('GET', KEYS[1]) "
+        "if (not cur and ARGV[1] == '') or cur == ARGV[1] then "
+        "redis.call('SET', KEYS[1], ARGV[2]) return 1 else return 0 end"
+    )
 
-def _make_store() -> JsonStore | UpstashStore:
+    def compare_and_set(self, kind: str, org: str, id: str, expected: dict | None, new: dict) -> bool:
+        exp = "" if expected is None else json.dumps(expected, ensure_ascii=False)
+        ok = self._cmd("EVAL", self.CAS_SCRIPT, "1", self._key(kind, org, id), exp,
+                       json.dumps(new, ensure_ascii=False))
+        return bool(ok)
+
+
+def make_store() -> SqliteDocStore | UpstashDocStore:
     if os.getenv("KV_REST_API_URL") and os.getenv("KV_REST_API_TOKEN"):
-        return UpstashStore()
-    return JsonStore()
+        return UpstashDocStore()
+    return SqliteDocStore()
 
 
-store = _make_store()
+# Module-level store. Repos fetch it through `get_store()` so tests can swap it.
+_store = None
+
+
+def get_store():
+    global _store
+    if _store is None:
+        _store = make_store()
+    return _store
+
+
+def set_store(store) -> None:
+    global _store
+    if _store is not None and _store is not store and hasattr(_store, "close"):
+        _store.close()
+    _store = store

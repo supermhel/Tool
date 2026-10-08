@@ -78,20 +78,28 @@ def analyze(criteria: list[dict], bidders: list[dict], delta: float = 0.2) -> di
         if best:
             entry["tie_at_pct"] = round(best[0] * 100, 1)
             entry["overtaken_by"] = best[1]
-            entry["flips_within_delta"] = abs(best[0]) <= delta
-        result["criteria"].append(entry)
 
+        flipped = False
         for sign in (-1, 1):
             w2 = dict(weights, **{cid: weights[cid] * (1 + sign * delta)})
-            s = _scores(w2, ratios)
-            others = {n: v for n, v in s.items() if n != a}
-            best = max(others, key=lambda n: (others[n], n))
-            # Losing the strict lead (a tie included) counts as a change; never let names decide.
-            changed = others[best] >= s[a] - 1e-9
+            changed, winner = False, a
+            if sum(w2.values()) > 0:   # delta=1 on the only criterion would leave nothing to weigh
+                s = _scores(w2, ratios)
+                others = {n: v for n, v in s.items() if n != a}
+                rival = max(others, key=lambda n: (others[n], n))
+                # Losing the strict lead (a tie included) counts as a change; names never decide.
+                changed = others[rival] >= s[a] - 1e-9
+                if changed:
+                    tied = abs(others[rival] - s[a]) <= 1e-9
+                    winner = None if tied else rival     # an exact tie has no winner
+            flipped = flipped or changed
             result["scenarios"].append({
                 "criterion_id": cid, "change_pct": round(sign * delta * 100),
-                "winner": best if changed else a, "changed": changed,
+                "winner": winner, "changed": changed,
             })
+        # Derived from the scenarios themselves so the two can never disagree on float edges.
+        entry["flips_within_delta"] = flipped
+        result["criteria"].append(entry)
 
     flippable = [c for c in result["criteria"] if c["tie_at_pct"] is not None]
     if flippable:

@@ -16,7 +16,9 @@ from __future__ import annotations  # methods named `list` shadow the builtin in
 import copy
 import hashlib
 import json
+import random
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -27,6 +29,12 @@ GENESIS = "0" * 64
 _lock = threading.RLock()
 _PAGE = 200
 _APPEND_RETRIES = 8
+_UPDATE_RETRIES = 25
+
+
+def _backoff(attempt: int) -> None:
+    """Jittered pause so contending writers (other processes) stop colliding in lockstep."""
+    time.sleep(random.uniform(0, 0.01 * (attempt + 1)))
 
 
 def now_iso() -> str:
@@ -57,35 +65,52 @@ class ChainedLog:
     def __init__(self, kind: str):
         self.kind = kind
         self._head_kind = f"{kind}_head"
+        self._lock = threading.RLock()  # per chain: verifying the audit log must not stall ticket writes
 
     def head(self, org: str) -> str:
         doc = get_store().get(self._head_kind, org, "head")
         return doc["hash"] if doc else GENESIS
 
-    def append(self, org: str, entry: dict) -> dict:
+    def append(self, org: str, entry: dict, id: str | None = None) -> dict:
         """Seal and store `entry` at the head of the chain.
 
         The head pointer is advanced with compare-and-set. If another writer got there first
         (possible across processes or serverless instances), our entry is withdrawn and the
         append is retried on top of the new head, so the chain never forks.
+
+        With an explicit `id` the call is idempotent: if that entry already exists it is returned
+        unchanged. Callers use this to resume an interrupted multi-step operation safely.
         """
         store = get_store()
-        for _ in range(_APPEND_RETRIES):
-            with _lock:
+        if id is not None:
+            existing = store.get(self.kind, org, id)
+            if existing is not None:
+                return existing
+        for attempt in range(_APPEND_RETRIES):
+            with self._lock:
                 prev_doc = store.get(self._head_kind, org, "head")
                 prev = prev_doc["hash"] if prev_doc else GENESIS
-                sealed = dict(entry, id=new_id(), org=org, created_at=now_iso(), prev_hash=prev)
+                sealed = dict(entry, id=id or new_id(), org=org, created_at=now_iso(), prev_hash=prev)
                 sealed["hash"] = compute_hash(prev, _sealed(sealed))
                 store.put(self.kind, org, sealed["id"], sealed)
                 try:
                     won = store.compare_and_set(self._head_kind, org, "head", prev_doc,
                                                 {"hash": sealed["hash"]})
                 except BaseException:
-                    store.delete(self.kind, org, sealed["id"])  # never leave an orphan behind
+                    # The write may have been applied before the error surfaced (a timeout after
+                    # the server ran it). If the head already points at us, we did commit.
+                    try:
+                        head = store.get(self._head_kind, org, "head")
+                    except Exception:  # noqa: BLE001
+                        head = None
+                    if head and head.get("hash") == sealed["hash"]:
+                        return sealed
+                    store.delete(self.kind, org, sealed["id"])  # not committed: leave no orphan
                     raise
                 if won:
                     return sealed
                 store.delete(self.kind, org, sealed["id"])
+            _backoff(attempt)
         raise RuntimeError(f"Could not append to the {self.kind} chain: too much write contention.")
 
     def get(self, org: str, id: str, include_deleted: bool = False) -> dict | None:
@@ -114,7 +139,7 @@ class ChainedLog:
         return out
 
     def soft_delete(self, org: str, id: str) -> bool:
-        with _lock:
+        with self._lock:
             e = get_store().get(self.kind, org, id)
             if e is None or e.get("deleted"):
                 return False
@@ -125,7 +150,7 @@ class ChainedLog:
 
     def verify(self, org: str) -> dict:
         """Walk the chain oldest-first and recompute every hash."""
-        with _lock:  # keeps this process's appends out of the walk
+        with self._lock:  # keeps this chain's in-process appends out of the walk
             return self._verify(org)
 
     def _verify(self, org: str) -> dict:
@@ -243,14 +268,16 @@ class Tenders:
         Returns (new_doc, mutate's return value), or None if the tender does not exist. If
         `mutate` raises, nothing is written. `mutate` must be free of side effects, since it may run again."""
         store = get_store()
-        for _ in range(_APPEND_RETRIES):
-            current = store.get(self.kind, org, id)
-            if current is None:
-                return None
-            new = copy.deepcopy(current)
-            result = mutate(new)
-            if store.compare_and_set(self.kind, org, id, current, new):
-                return new, result
+        with tender_lock(org, id):  # threads in this process queue here instead of colliding in CAS
+            for attempt in range(_UPDATE_RETRIES):
+                current = store.get(self.kind, org, id)
+                if current is None:
+                    return None
+                new = copy.deepcopy(current)
+                result = mutate(new)
+                if store.compare_and_set(self.kind, org, id, current, new):
+                    return new, result
+                _backoff(attempt)  # only another process can make us lose; back off with jitter
         raise RuntimeError("Could not update the tender: too much write contention.")
 
     def create(self, org: str, doc: dict) -> dict:

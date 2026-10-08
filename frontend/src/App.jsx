@@ -122,7 +122,7 @@ export default function App() {
           <EvaluateView templates={templates} reloadTemplates={reloadTemplates}
                         tickets={tickets} setTickets={setTickets} loadErr={loadErr} />
         )}
-        {tab === "tenders" && <TendersView templates={templates} me={me} />}
+        {tab === "tenders" && <TendersView key={me ? `${me.org}:${me.label}` : "anon"} templates={templates} me={me} />}
         {tab === "sensitivity" && <SensitivityView />}
         {tab === "audit" && <AuditView />}
       </main>

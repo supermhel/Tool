@@ -80,7 +80,9 @@ export default function SensitivityResult({ result }) {
           <h4 className="label">Scenarios that change the winner</h4>
           <ul className="text-sm text-muted space-y-1">
             {flips.map((s, i) => (
-              <li key={i}>{labelOf[s.criterion_id]} {sign(s.change_pct)}% → <b style={{ color: "var(--text)" }}>{s.winner}</b> wins</li>
+              <li key={i}>{labelOf[s.criterion_id]} {sign(s.change_pct)}% → {s.winner
+                ? <><b style={{ color: "var(--text)" }}>{s.winner}</b> wins</>
+                : <b style={{ color: "var(--text)" }}>exact tie for first</b>}</li>
             ))}
           </ul>
         </div>

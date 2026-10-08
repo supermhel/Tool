@@ -12,11 +12,28 @@ import re
 
 import yaml
 
-_ANCHORS = re.compile(r"(^|[\s\[{,:-])[&*][A-Za-z0-9_-]+")
+
+
+_MAX_BRACKETS = 2000
 
 
 class ImportError_(ValueError):
     pass
+
+
+def _reject_anchors(text: str) -> None:
+    """Refuse YAML anchors and aliases (alias-expansion bombs). Uses the parser's own events, so a
+    quoted `*all*` in ordinary text is not mistaken for an alias."""
+    # The event parser is quadratic on deeply nested flow collections (20 KB of "[" took minutes),
+    # so bound the nesting cheaply first. A real template needs a few dozen brackets at most.
+    if text.count("[") + text.count("{") > _MAX_BRACKETS:
+        raise ImportError_("File is nested too deeply.")
+    try:
+        for ev in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(ev, yaml.AliasEvent) or getattr(ev, "anchor", None):
+                raise ImportError_("YAML anchors and aliases are not allowed.")
+    except yaml.YAMLError:
+        pass  # a syntax error is reported by the real parse right after
 
 
 def _slug(text: str) -> str:
@@ -56,8 +73,7 @@ def parse_template(filename: str, content: str) -> dict:
         if name.endswith(".json"):
             data = json.loads(content)
         elif name.endswith((".yaml", ".yml")):
-            if _ANCHORS.search(content):
-                raise ImportError_("YAML anchors and aliases are not allowed.")
+            _reject_anchors(content)
             data = yaml.safe_load(content)
         elif name.endswith(".csv"):
             data = _from_csv(content, filename)

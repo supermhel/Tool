@@ -174,35 +174,32 @@ def begin_award(doc: dict) -> None:
 
 
 def write_award_tickets(org: str, tender_id: str) -> dict:
-    """Write one sealed ticket per bidder, then mark the tender awarded. Safe to re-run."""
+    """Write one sealed ticket per bidder, then mark the tender awarded. Safe to re-run.
+
+    For each bidder the ticket id is first *reserved* on the tender (atomically), and only then is
+    the ticket appended under that id. A crash between the two steps leaves a reservation without
+    a ticket; the re-run finds the reservation and appends the same id. Appending an id that
+    already exists is a no-op, so no step can ever produce a second ticket for a bidder."""
     doc = repo.tenders.get(org, tender_id)
     res = results(doc)
     template = doc["template"]
     rank_of = {r["name"]: r["rank"] for r in res["ranking"]}
     n = len(doc["bidders"])
     for b in res["bidders"]:
-        if b["bidder_id"] in doc["ticket_ids"]:
-            continue
+        bid = b["bidder_id"]
+
+        def reserve(d, bid=bid):
+            d["ticket_ids"].setdefault(bid, repo.new_id())   # keeps an existing reservation
+
+        reserved, _ = repo.tenders.update(org, tender_id, reserve)
         ev = evaluate(template, {c["criterion_id"]: c["effective"] for c in b["criteria"]})
-        ticket = repo.tickets.append(org, {
+        repo.tickets.append(org, {
             "template_id": template["id"], "template_name": template["name"],
             "template_version": template["version"], "subject": b["name"],
             "score": ev["score"], "grade": ev["grade"], "grade_label": ev["grade_label"],
             "details": ev["details"], "tender_id": doc["id"],
             "notes": f"Tender '{doc['name']}': rank {rank_of[b['name']]} of {n}",
-        })
-        won = []
-
-        def record(d, bid=b["bidder_id"], tid=ticket["id"]):
-            won.clear()
-            if bid in d["ticket_ids"]:
-                return                      # another writer already recorded this bidder's ticket
-            d["ticket_ids"][bid] = tid
-            won.append(True)
-
-        repo.tenders.update(org, tender_id, record)
-        if not won:                         # lost the race: hide our duplicate (it stays sealed in the chain)
-            repo.tickets.soft_delete(org, ticket["id"])
+        }, id=reserved["ticket_ids"][bid])
 
     def finish(d):
         d["ranking"] = res["ranking"]

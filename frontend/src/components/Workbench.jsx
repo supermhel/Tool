@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Lock, Gavel, FileText, Sparkles, CheckCircle2, AlertTriangle, Save, EyeOff, Trophy, Users,
 } from "lucide-react";
@@ -96,7 +96,9 @@ function ScoringStage({ tender, refresh, me }) {
   // With auth on, a key may only score as its own label (one key per committee member).
   const bound = me?.auth ? me.label : null;
   const allowed = !bound || tender.evaluators.includes(bound);
-  const [evaluator, setEvaluator] = useState(bound && allowed ? bound : tender.evaluators[0]);
+  const [picked, setPicked] = useState(tender.evaluators[0]);
+  // Derived on every render: the key (and so `me`) can change while this stage stays mounted.
+  const evaluator = bound && allowed ? bound : picked;
   const [bidderId, setBidderId] = useState(tender.bidders[0].id);
   const [drafts, setDrafts] = useState({});
   const [busy, setBusy] = useState(false);
@@ -152,7 +154,7 @@ function ScoringStage({ tender, refresh, me }) {
         <div>
           <label className="label" htmlFor="who">Scoring as</label>
           <select id="who" className="input" value={evaluator} disabled={!!bound}
-                  onChange={(e) => setEvaluator(e.target.value)}>
+                  onChange={(e) => setPicked(e.target.value)}>
             {tender.evaluators.map((e) => <option key={e}>{e}</option>)}
           </select>
           {bound && allowed && <p className="hint mt-1">Your key is labelled “{bound}”, so you score as {bound}.</p>}
@@ -298,10 +300,14 @@ export default function Workbench({ id, onChanged, me }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const latest = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++latest.current;       // a slower, older response must not overwrite a newer one
     const t = await api.tender(id);
+    const r = t.status === "scoring" ? null : await api.tenderResults(id);
+    if (mine !== latest.current) return;
     setTender(t);
-    setResults(t.status === "scoring" ? null : await api.tenderResults(id));
+    setResults(r);
     onChanged?.();
   }, [id, onChanged]);
 

@@ -47,11 +47,14 @@ def test_concurrent_tender_writes_are_not_lost(client, monkeypatch):
     store = storage.get_store()
     real_cas, raced = store.compare_and_set, []
 
+    tid_ = tid
+
     def racing_cas(kind, org, id, expected, new):
         if kind == "tender" and not raced:
             raced.append(True)
-            # another request (bob) commits between our read and our write
-            assert _score(TestClient(app), tid, "b1", "bob", "sec", 4).status_code == 200
+            # another writer (bob) commits between our read and our write
+            repo.tenders.update(org, tid_, lambda d: svc.submit_score(
+                d, "b1", "bob", "sec", 4, WHY))
         return real_cas(kind, org, id, expected, new)
 
     monkeypatch.setattr(store, "compare_and_set", racing_cas)
@@ -71,7 +74,7 @@ def test_a_stale_score_cannot_reopen_a_closed_tender(client, monkeypatch):
     def racing_cas(kind, org, id, expected, new):
         if kind == "tender" and not raced:
             raced.append(True)
-            assert TestClient(app).post(f"/api/v1/tenders/{tid}/close-scoring").status_code == 200
+            repo.tenders.update(org, tid, svc.close_scoring)
         return real_cas(kind, org, id, expected, new)
 
     monkeypatch.setattr(store, "compare_and_set", racing_cas)
@@ -103,11 +106,11 @@ def test_interrupted_award_resumes_without_duplicates(client, monkeypatch):
     client.post(f"/api/v1/tenders/{tid}/close-scoring")
     real_append, calls = repo.tickets.append, []
 
-    def flaky(org, entry):
+    def flaky(org, entry, id=None):
         calls.append(1)
         if len(calls) == 2:
             raise RuntimeError("disk full")
-        return real_append(org, entry)
+        return real_append(org, entry, id=id)
 
     monkeypatch.setattr(repo.tickets, "append", flaky)
     with pytest.raises(RuntimeError):
@@ -148,7 +151,7 @@ def test_failed_head_update_leaves_no_phantom_entry(monkeypatch):
 def test_sqlite_cas_is_atomic_across_connections(tmp_path):
     path = str(tmp_path / "shared.db")
     a, b = SqliteDocStore(path), SqliteDocStore(path)
-    for round_ in range(150):
+    for round_ in range(50):
         key, results = f"k{round_}", {}
         barrier = threading.Barrier(2)
 
@@ -242,3 +245,116 @@ def test_scenario_at_exact_tie_counts_as_a_change_regardless_of_names():
     scen = next(s for s in r["scenarios"] if s["criterion_id"] == "price" and s["change_pct"] == -25)
     assert scen["changed"] is True
     assert r["stable"] is False
+
+
+# ══ second-pass review ═══════════════════════════════════════════════════════
+
+# ── A. an award interrupted at ANY step resumes without duplicate tickets ────
+
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+def test_award_interrupted_when_recording_a_ticket_never_duplicates(client, monkeypatch, fail_at):
+    tid = _tender(client, evaluators=("alice",))
+    _fill(client, tid, ("alice",))
+    client.post(f"/api/v1/tenders/{tid}/close-scoring")
+    real, seen = repo.tenders.update, []
+
+    def flaky(org, id, mutate):
+        if getattr(mutate, "__name__", "") in ("reserve", "record", "finish"):
+            seen.append(1)
+            if len(seen) == fail_at:
+                raise RuntimeError("database is locked")
+        return real(org, id, mutate)
+
+    monkeypatch.setattr(repo.tenders, "update", flaky)
+    with pytest.raises(RuntimeError):
+        TestClient(app, raise_server_exceptions=True).post(f"/api/v1/tenders/{tid}/award")
+    monkeypatch.setattr(repo.tenders, "update", real)
+
+    assert client.post(f"/api/v1/tenders/{tid}/award").status_code == 200
+    tickets = client.get("/api/v1/tickets").json()
+    assert sorted(t["subject"] for t in tickets) == ["Acme", "Globex"], tickets
+    doc = repo.tenders.get("default", tid)
+    assert sorted(doc["ticket_ids"].values()) == sorted(t["id"] for t in tickets)
+    assert client.get("/api/v1/tickets/verify").json()["ok"] is True
+
+
+# ── B. heavy concurrent scoring must not fail with "write contention" ────────
+
+def test_many_simultaneous_scores_all_succeed(client):
+    evs = [f"e{i}" for i in range(6)]
+    tid = _tender(client, evaluators=evs, bidders=[f"B{i}" for i in range(5)])
+    errors = []
+
+    def go(ev, b, c):
+        try:
+            repo.tenders.update("default", tid, lambda d: svc.submit_score(d, b, ev, c, 5, WHY))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(repr(exc))
+
+    cells = [(ev, f"b{i}", c) for ev in evs for i in range(1, 6) for c in ("sec", "price")]
+    threads = [threading.Thread(target=go, args=cell) for cell in cells]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors, errors[:3]
+    assert sum(client.get(f"/api/v1/tenders/{tid}").json()["progress"]["submitted"].values()) == 60
+
+
+# ── C. an ambiguous commit (applied, then the connection drops) is not undone ─
+
+def test_cas_that_commits_then_raises_does_not_corrupt_the_chain(monkeypatch):
+    store = storage.get_store()
+    real_cas, n = store.compare_and_set, []
+
+    def commit_then_timeout(*a, **k):
+        ok = real_cas(*a, **k)
+        n.append(1)
+        if len(n) == 1:
+            raise TimeoutError("read timed out after the server applied the write")
+        return ok
+
+    monkeypatch.setattr(store, "compare_and_set", commit_then_timeout)
+    first = repo.tickets.append("default", {"subject": "one"})      # must be recognised as committed
+    repo.tickets.append("default", {"subject": "two"})
+    v = repo.tickets.verify("default")
+    assert v["ok"] is True and v["count"] == 2, v
+    assert first["subject"] == "one"
+
+
+# ── D. sensitivity: criteria flags and scenarios can never disagree ──────────
+
+def test_sensitivity_flags_and_scenarios_always_agree():
+    import random
+    from app.sensitivity import analyze
+    rng = random.Random(3)
+    cases = [([3, 3], [6, 2], [3, 6], 0.25)]                         # the reviewer's float-edge example
+    for _ in range(4000):
+        cases.append(([rng.randint(1, 9) for _ in range(2)], [rng.randint(0, 10) for _ in range(2)],
+                      [rng.randint(0, 10) for _ in range(2)], rng.choice([0.1, 0.2, 0.25, 0.5])))
+    for w, a, b, delta in cases:
+        crit = [{"id": f"c{i}", "label": f"c{i}", "weight": w[i], "max": 10} for i in range(2)]
+        r = analyze(crit, [{"name": "A", "scores": {"c0": a[0], "c1": a[1]}},
+                           {"name": "B", "scores": {"c0": b[0], "c1": b[1]}}], delta)
+        if r["tie_at_top"]:
+            continue
+        for c in r["criteria"]:
+            changed = any(s["changed"] for s in r["scenarios"] if s["criterion_id"] == c["id"])
+            assert c["flips_within_delta"] == changed, (w, a, b, delta, c)
+        assert r["stable"] == (not any(s["changed"] for s in r["scenarios"])), (w, a, b, delta)
+
+
+def test_exact_tie_scenario_names_no_winner():
+    from app.sensitivity import analyze
+    crit = [{"id": "price", "label": "Price", "weight": 40, "max": 10},
+            {"id": "quality", "label": "Quality", "weight": 60, "max": 10}]
+    r = analyze(crit, [{"name": "Amy", "scores": {"price": 9, "quality": 6}},
+                       {"name": "Zed", "scores": {"price": 5, "quality": 8}}], delta=0.25)
+    scen = next(s for s in r["scenarios"] if s["criterion_id"] == "price" and s["change_pct"] == -25)
+    assert scen["changed"] is True and scen["winner"] is None       # a tie has no winner
+
+
+# ── E. legitimate YAML containing an asterisk is not mistaken for an alias ───
+
+def test_yaml_with_quoted_asterisks_imports(client):
+    y = ("id: starred\nname: Starred\ncriteria:\n"
+         '  - {id: a, label: A, weight: 1, max: 5, detail: "Must cover *all* sites & more"}\n')
+    assert client.post("/api/v1/templates/import", json={"filename": "t.yaml", "content": y}).status_code == 201

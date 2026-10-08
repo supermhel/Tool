@@ -10,9 +10,10 @@ Verified the earlier work, closed most open items, and ran two independent subag
 ## Reality Map
 | Item | State | Evidence |
 |------|-------|----------|
-| Backend suite | DONE | PROVEN: 204 passed, 97.8% coverage (Python 3.13 local). An earlier 189-test run also passed on Python 3.12 in Docker. |
+| Backend suite | DONE | PROVEN: 212 passed, 97.75% coverage on Python 3.13 (local) and on Python 3.12 (Docker) |
+| Second-pass independent review (opus, 2026-10-08) | DONE | 5 real defects reproduced and fixed, each with a test that failed first: duplicate ticket when an award is interrupted while recording (now reserve-then-append-by-id), ambiguous CAS commit permanently breaking the chain, tender write contention, sensitivity flag/scenario float-edge mismatch, evaluator lock frozen at mount. Also fixed a YAML nesting DoS my own anchor fix had introduced (152 s on 20 KB) |
 | Docker images build + Python 3.12 | DONE | PROVEN: both Dockerfiles built; final 204 tests pass on Python 3.12 in a container (97.8%); verify images removed |
-| Review fixes (races, CAS, ranking, 500s) | DONE | PROVEN: 15 regression tests failed on the reviewed code, pass now; CAS mutation-checked |
+| Review fixes (races, CAS, ranking, 500s) | DONE | PROVEN: regression tests in `test_review_fixes.py` failed on the reviewed code and pass now; CAS mutation-checked |
 | Evaluator identity under keys | DONE | PROVEN: `test_auth.py` + live UI (organiser key blocked, alice key locked to alice) |
 | Report/debrief blob tabs | DONE | PROVEN with authenticated fetch of the blob content; the real new-tab navigation itself was mocked, not observed |
 | CI replication (2026-10-03) | DONE | PROVEN: fresh venv from `requirements-dev.txt` → 204 passed, 97.8%; `npm ci` + build + `npm audit --omit=dev --audit-level=high` → 0 |

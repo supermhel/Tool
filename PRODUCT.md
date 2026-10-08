@@ -47,7 +47,7 @@ Confirmed as binding by the owner:
 
 ## Evidence on Hand
 
-- A working application and its test suite (204 backend tests, about 98% line coverage).
+- A working application and its test suite (212 backend tests, about 98% line coverage).
 - Synthetic demonstration data only (the example bidders Acme, Globex and Initech in the sensitivity calculator). There are **no real customers, tenders, benchmarks or testimonials**; none may be invented.
 - `cadrage-projet-tool.html` is an early planning draft, not a specification or source of truth.
 

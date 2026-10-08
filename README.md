@@ -77,9 +77,10 @@ organisation named `default`. Do not expose open mode publicly. `GET /health` an
    30% of the scale).
 4. **Consensus.** Each divergent criterion needs an agreed value and a justification. The
    rest default to the mean.
-5. **Award.** The award is claimed atomically (`consensus` → `awarding`), then one sealed ticket
-   per bidder is written and the tender becomes `awarded` and read-only. An interrupted award can
-   be resumed by calling award again: tickets already written are kept, never duplicated. The
+5. **Award.** The award is claimed atomically (`consensus` → `awarding`). For each bidder the ticket
+   id is reserved on the tender first and the sealed ticket is then written under that id, so an
+   interrupted award can be resumed by calling award again: nothing is written twice. The tender
+   then becomes `awarded` and read-only. The
    ranking uses exact totals (equal totals share a rank; there is no automatic tie-break). The
    award report and debrief letters (PDF via print) then become available.
 
@@ -171,6 +172,9 @@ Ollama does not run on Vercel; point `OLLAMA_URL` at a host you run.
   *process* is mid-append can briefly report a false alarm; re-run it.
 - **Evaluator identity** is enforced only when API keys are on. In open mode anyone can score as
   any evaluator.
+- **Simultaneous awards from different processes.** Within one process awards are serialised. Two
+  *processes* awarding the same tender in the same instant could both write a ticket under the
+  reserved id; run a single worker for tender mutations if that matters to you.
 - **Size.** A tender is capped at 3,000 scores (bidders × criteria × evaluators) because it is
   stored as one document.
 - **Soft delete.** Hiding a ticket keeps its record in the chain; erasing personal data
@@ -180,7 +184,7 @@ Ollama does not run on Vercel; point `OLLAMA_URL` at a host you run.
 ## Tests
 
 ```bash
-cd backend && python -m pytest -q --cov=app      # 204 tests, ~98% line coverage
+cd backend && python -m pytest -q --cov=app      # 212 tests, ~98% line coverage
 cd frontend && npm run build && npm audit --omit=dev
 ```
 CI (`.github/workflows/ci.yml`) runs both.
